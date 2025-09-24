@@ -13,7 +13,7 @@ from PyPDF2 import PdfMerger   # <--- added for merging
 TEMPLATE_PDF = "template.pdf"
 TEMPLATE_CSV = os.path.join("assets", "BIR_Invoice.csv")
 PREVIEW_IMAGE = os.path.join("assets", "blank_invoice.png")
-POPLER_PATH = r"C:\poppler-24.07.0\Library\bin"
+POPLER_PATH = r"C:\poppler-24.07.0\Library\bin"   # <--- YOU NEED THIS!
 
 # === Helpers ===
 def split_tin(tin_value):
