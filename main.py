@@ -1,3 +1,4 @@
+# === ver1.4 === #
 import tkinter as tk
 from tkinter import filedialog, messagebox
 from PIL import Image, ImageTk
@@ -5,42 +6,69 @@ import pandas as pd
 import os
 import shutil
 from fillpdf import fillpdfs
+from pdf2image import convert_from_path
+from PyPDF2 import PdfMerger   # <--- added for merging
 
 # === Paths ===
 TEMPLATE_PDF = "template.pdf"
 TEMPLATE_CSV = os.path.join("assets", "BIR_Invoice.csv")
 PREVIEW_IMAGE = os.path.join("assets", "blank_invoice.png")
+POPLER_PATH = r"C:\poppler-24.07.0\Library\bin"
+
+# === Helpers ===
+def split_tin(tin_value):
+    """Split a TIN string into 4 parts or return blanks if empty."""
+    if pd.isna(tin_value) or str(tin_value).strip() in ("", "-"):
+        return ["", "", "", ""]
+    parts = str(tin_value).split("-")
+    while len(parts) < 4:
+        parts.append("")
+    return parts[:4]
+
+def format_date_mmddyyyy(date_value):
+    """Convert 8/1/2025 to 08012025 (keep blank if missing)"""
+    if pd.isna(date_value) or str(date_value).strip() == "":
+        return ""
+    try:
+        d = pd.to_datetime(date_value)
+        return d.strftime("%m%d%Y")
+    except:
+        return str(date_value)
+
+def flatten_pdf_to_jpg_pdf(input_pdf, output_pdf):
+    """Render PDF to images then re-save as flattened PDF."""
+    images = convert_from_path(input_pdf, dpi=300, poppler_path=POPLER_PATH)
+    images[0].save(output_pdf, "PDF", resolution=300.0,
+                   save_all=True, append_images=images[1:])
 
 # === Main Process Function ===
 def process_csv(csv_path):
     try:
         df = pd.read_csv(csv_path, dtype=str)
+        merged_files = []  # collect flattened pdfs here
 
         for index, row in df.iterrows():
-            From = row['From'].replace("-", "")
-            To = row['To'].replace("-", "")
-            TIN = row['TIN']
-            Payee = row['Payee']
-            Address = row['Address']
-            Zip_Code = row['Zip_Code']
-            myTIN = row['myTIN']
-            myPayee = row['myPayee']
-            myAddress = row['myAddress']
-            myZip_Code = row['myZip_Code']
-            IPS_EWT = row['IPS_EWT']
-            ATC = row['ATC']
-            M1 = row['M1']
-            M2 = row['M2']
-            M3 = row['M3']
-            M_Total = row['M_Total']
-            TWQ = row['TWQ']
-            max_total = row['max_total']
+            From = format_date_mmddyyyy(row.get('From', ""))
+            To = format_date_mmddyyyy(row.get('To', ""))
+            TIN1, TIN2, TIN3, TIN4 = split_tin(row.get('TIN', ""))
+            myTIN1, myTIN2, myTIN3, myTIN4 = split_tin(row.get('myTIN', ""))
 
-            TIN_parts = TIN.split("-")
-            myTIN_parts = myTIN.split("-")
+            def safe(v): return "" if pd.isna(v) else str(v)
 
-            TIN1, TIN2, TIN3, TIN4 = TIN_parts
-            myTIN1, myTIN2, myTIN3, myTIN4 = myTIN_parts
+            Payee = safe(row.get('Payee', ""))
+            Address = safe(row.get('Address', ""))
+            Zip_Code = safe(row.get('Zip_Code', ""))
+            myPayee = safe(row.get('myPayee', ""))
+            myAddress = safe(row.get('myAddress', ""))
+            myZip_Code = safe(row.get('myZip_Code', ""))
+            IPS_EWT = safe(row.get('IPS_EWT', ""))
+            ATC = safe(row.get('ATC', ""))
+            M1 = safe(row.get('M1', ""))
+            M2 = safe(row.get('M2', ""))
+            M3 = safe(row.get('M3', ""))
+            M_Total = safe(row.get('M_Total', ""))
+            TWQ = safe(row.get('TWQ', ""))
+            max_total = safe(row.get('max_total', ""))
 
             form_fields = list(fillpdfs.get_form_fields(TEMPLATE_PDF).keys())
             data_dict = {
@@ -70,15 +98,32 @@ def process_csv(csv_path):
                 form_fields[23]: max_total
             }
 
-            output_pdf_path = f"output_filled_{index + 1}.pdf"
-            fillpdfs.write_fillable_pdf(TEMPLATE_PDF, output_pdf_path, data_dict)
+            # Step 1: fill PDF
+            filled_pdf_path = f"filled_{index+1}.pdf"
+            fillpdfs.write_fillable_pdf(TEMPLATE_PDF, filled_pdf_path, data_dict)
 
-        status_var.set("✅ PDFs generated successfully!")
+            # Step 2: flatten PDF (image to PDF)
+            flattened_pdf_path = f"flattened_{index+1}.pdf"
+            flatten_pdf_to_jpg_pdf(filled_pdf_path, flattened_pdf_path)
+
+            merged_files.append(flattened_pdf_path)  # add to list
+            print(f"✅ Done row {index+1} → {flattened_pdf_path}")
+
+        # Step 3: merge all flattened pdfs
+        if merged_files:
+            merger = PdfMerger()
+            for pdf_file in merged_files:
+                merger.append(pdf_file)
+            merged_output = "merged_output.pdf"
+            merger.write(merged_output)
+            merger.close()
+            print(f"✅ Merged PDF created: {merged_output}")
+
+        status_var.set("✅ PDFs generated, flattened & merged successfully!")
 
     except Exception as e:
         messagebox.showerror("Error", str(e))
         status_var.set("❌ Failed to generate PDFs.")
-
 
 # === File Selectors ===
 def browse_file():
@@ -86,14 +131,12 @@ def browse_file():
     if file_path:
         csv_path_var.set(file_path)
 
-
 def run_process():
     path = csv_path_var.get()
     if not path:
         messagebox.showwarning("Missing File", "Please select a CSV file.")
         return
     process_csv(path)
-
 
 def download_template():
     dest_path = filedialog.asksaveasfilename(
@@ -108,10 +151,9 @@ def download_template():
         except Exception as e:
             messagebox.showerror("Error", f"Failed to save template:\n{e}")
 
-
 # === Build UI ===
 root = tk.Tk()
-root.title("PDF Filler App ni Gemson")
+root.title("PDF Filler + Flattener App ni Gemson")
 root.geometry("850x600")
 root.resizable(False, False)
 
@@ -136,7 +178,7 @@ status_var = tk.StringVar()
 tk.Label(frame, text="CSV File:").pack(anchor="w")
 tk.Entry(frame, textvariable=csv_path_var, width=50).pack(pady=5)
 tk.Button(frame, text="📂 Browse CSV", command=browse_file, width=30).pack(pady=5)
-tk.Button(frame, text="✅ Generate PDFs", command=run_process, width=30, bg="green", fg="white").pack(pady=10)
+tk.Button(frame, text="✅ Generate & Flatten PDFs", command=run_process, width=30, bg="green", fg="white").pack(pady=10)
 tk.Button(frame, text="⬇️ Download CSV Template", command=download_template, width=30).pack(pady=5)
 tk.Label(frame, textvariable=status_var, fg="blue").pack(pady=20)
 
